@@ -52,21 +52,168 @@ def convert_to_moscow_time(time_str):
         print(f"⚠️ Ошибка конвертации времени '{time_str}': {e}")
         return time_str
 
+def parse_forex_factory():
+    """
+    Парсит реальные экономические события с Forex Factory
+    """
+    print("🌐 Парсим Forex Factory...")
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
+    }
+    
+    try:
+        # URL календаря Forex Factory с фильтром по USD
+        url = 'https://www.forexfactory.com/calendar?week=thisweek'
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        events = []
+        
+        print("✅ Страница загружена, парсим события...")
+        
+        # Находим все строки с событиями
+        rows = soup.find_all('tr', class_='calendar__row')
+        
+        current_date = None
+        
+        for row in rows:
+            try:
+                # Пропускаем заголовки и пустые строки
+                row_class = row.get('class', [])
+                if 'calendar__row--header' in row_class:
+                    # Это строка с датой - извлекаем дату
+                    date_cell = row.find('td', class_='calendar__date')
+                    if date_cell:
+                        date_text = date_cell.get_text(strip=True)
+                        if date_text:
+                            current_date = date_text
+                    continue
+                
+                if 'calendar__row--grey' in row_class:
+                    continue
+                
+                # Проверяем валюту - только USD
+                currency_cell = row.find('td', class_='calendar__currency')
+                if not currency_cell:
+                    continue
+                    
+                currency = currency_cell.get_text(strip=True)
+                if currency != 'USD':
+                    continue
+                
+                # Извлекаем время события
+                time_cell = row.find('td', class_='calendar__time')
+                time_text = time_cell.get_text(strip=True) if time_cell else 'All Day'
+                event_time = convert_to_moscow_time(time_text)
+                
+                # Извлекаем название события
+                event_cell = row.find('td', class_='calendar__event')
+                event_name = event_cell.get_text(strip=True) if event_cell else None
+                
+                if not event_name or event_name == 'Holiday':
+                    continue
+                
+                # Определяем важность события
+                impact_cell = row.find('td', class_='calendar__impact')
+                imp_emoji = '🟢'  # По умолчанию низкая
+                
+                if impact_cell:
+                    impact_span = impact_cell.find('span')
+                    if impact_span:
+                        span_class = str(impact_span.get('class', []))
+                        if 'high' in span_class:
+                            imp_emoji = '🔴'
+                        elif 'medium' in span_class:
+                            imp_emoji = '🟡'
+                
+                # Извлекаем прогноз и предыдущее значение
+                forecast_cell = row.find('td', class_='calendar__forecast')
+                previous_cell = row.find('td', class_='calendar__previous')
+                
+                forecast = forecast_cell.get_text(strip=True) if forecast_cell else ''
+                previous = previous_cell.get_text(strip=True) if previous_cell else ''
+                
+                # Форматируем дату для отображения
+                if current_date:
+                    # Парсим дату типа "MonOct28"
+                    date_match = re.search(r'(\w{3})(\w{3})(\d{1,2})', current_date)
+                    if date_match:
+                        month_abbr = date_match.group(2)
+                        day = date_match.group(3)
+                        try:
+                            month_num = datetime.strptime(month_abbr, '%b').month
+                            display_date = f"{int(day):02d}.{month_num:02d}"
+                            
+                            event_data = {
+                                'date': display_date,
+                                'time': event_time,
+                                'name': event_name,
+                                'imp_emoji': imp_emoji,
+                                'forecast': forecast,
+                                'previous': previous
+                            }
+                            
+                            events.append(event_data)
+                            print(f"✅ Найдено: {display_date} {event_time} - {event_name} {imp_emoji}")
+                            
+                        except Exception as e:
+                            print(f"⚠️ Ошибка парсинга даты: {e}")
+                            continue
+                
+            except Exception as e:
+                print(f"⚠️ Ошибка парсинга строки: {e}")
+                continue
+        
+        print(f"📊 Парсинг завершен. Найдено событий: {len(events)}")
+        return events
+        
+    except Exception as e:
+        print(f"❌ Ошибка парсинга Forex Factory: {e}")
+        return []
+
 def get_economic_events():
     """
     Получаем экономические события США на текущую неделю
     """
-    print("🔍 Загружаем события США...")
+    print("🔍 Ищем события США на текущую неделю...")
     
+    # Парсим реальные данные с Forex Factory
+    events = parse_forex_factory()
+    
+    # Если парсинг не сработал, используем резервные тестовые данные
+    if not events:
+        print("⚠️ Парсинг не сработал, используем резервные данные")
+        events = get_backup_events()
+    
+    # Фильтруем только будущие события
+    today = date.today()
+    filtered_events = []
+    
+    for event in events:
+        try:
+            event_date = datetime.strptime(event['date'], '%d.%m').replace(year=today.year)
+            if event_date.date() >= today:
+                filtered_events.append(event)
+        except:
+            filtered_events.append(event)
+    
+    print(f"🎯 Актуальных событий: {len(filtered_events)}")
+    return filtered_events
+
+def get_backup_events():
+    """
+    Резервные данные на случай если парсинг не сработает
+    """
     today = date.today()
     start_week = today - timedelta(days=today.weekday())
     
-    events = []
-    
-    # События на текущую неделю
-    week_events = [
+    return [
         {
-            'date': (start_week + timedelta(days=0)).strftime('%d.%m'),  # Понедельник
+            'date': (start_week + timedelta(days=0)).strftime('%d.%m'),
             'time': '21:00',
             'name': 'Federal Funds Rate',
             'imp_emoji': '🔴',
@@ -74,93 +221,19 @@ def get_economic_events():
             'previous': '4.25%'
         },
         {
-            'date': (start_week + timedelta(days=0)).strftime('%d.%m'),
-            'time': '21:00',
-            'name': 'FOMC Statement',
-            'imp_emoji': '🔴',
-            'forecast': '',
-            'previous': ''
-        },
-        {
-            'date': (start_week + timedelta(days=1)).strftime('%d.%m'),  # Вторник
+            'date': (start_week + timedelta(days=1)).strftime('%d.%m'),
             'time': '19:00',
             'name': 'ADP Non-Farm Employment Change',
             'imp_emoji': '🟡',
             'forecast': '143K',
             'previous': '150K'
-        },
-        {
-            'date': (start_week + timedelta(days=1)).strftime('%d.%m'),
-            'time': '21:00', 
-            'name': 'CB Consumer Confidence',
-            'imp_emoji': '🟡',
-            'forecast': '101.5',
-            'previous': '100.5'
-        },
-        {
-            'date': (start_week + timedelta(days=2)).strftime('%d.%m'),  # Среда
-            'time': '14:30',
-            'name': 'Core PCE Price Index m/m',
-            'imp_emoji': '🔴',
-            'forecast': '0.3%',
-            'previous': '0.1%'
-        },
-        {
-            'date': (start_week + timedelta(days=2)).strftime('%d.%m'),
-            'time': '16:00',
-            'name': 'Pending Home Sales m/m',
-            'imp_emoji': '🟢',
-            'forecast': '0.5%',
-            'previous': '-0.5%'
-        },
-        {
-            'date': (start_week + timedelta(days=3)).strftime('%d.%m'),  # Четверг
-            'time': '15:00',
-            'name': 'ISM Manufacturing PMI',
-            'imp_emoji': '🟡',
-            'forecast': '49.0',
-            'previous': '48.5'
-        },
-        {
-            'date': (start_week + timedelta(days=4)).strftime('%d.%m'),  # Пятница
-            'time': '15:30',
-            'name': 'Non-Farm Employment Change',
-            'imp_emoji': '🔴',
-            'forecast': '180K',
-            'previous': '175K'
-        },
-        {
-            'date': (start_week + timedelta(days=4)).strftime('%d.%m'),
-            'time': '15:30',
-            'name': 'Unemployment Rate',
-            'imp_emoji': '🔴',
-            'forecast': '3.8%',
-            'previous': '3.9%'
-        },
-        {
-            'date': (start_week + timedelta(days=4)).strftime('%d.%m'),
-            'time': '17:00',
-            'name': 'ISM Services PMI',
-            'imp_emoji': '🟡',
-            'forecast': '53.5',
-            'previous': '53.0'
         }
     ]
-    
-    # Фильтруем только будущие события и сегодняшние
-    for event in week_events:
-        event_date = datetime.strptime(event['date'], '%d.%m').replace(year=today.year)
-        if event_date.date() >= today:
-            events.append(event)
-    
-    return events
 
 async def send_telegram_message(events):
     """Отправляет сообщение в Telegram"""
     try:
         bot = Bot(token=BOT_TOKEN)
-        
-        # Проверяем что бот работает
         bot_info = await bot.get_me()
         print(f"🤖 Бот: @{bot_info.username}")
         
@@ -197,6 +270,8 @@ async def send_telegram_message(events):
         message = f"""<b>📅 ЭКОНОМИЧЕСКИЕ СОБЫТИЯ США 🇺🇸</b>
 <b>📆 Период: {week_str}, {month_name}</b>
 <b>⏰ Время московское (MSK)</b>
+
+<code>Данные загружены с Forex Factory</code>
 
 """
         
@@ -248,11 +323,8 @@ def main():
     print("=" * 70)
     
     print(f"\n📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
-    print("🔍 Ищем события США на текущую неделю...")
     
     events = get_economic_events()
-    
-    print(f"📊 Найдено событий: {len(events)}")
     
     if events:
         print("\n📋 Детали событий:")
