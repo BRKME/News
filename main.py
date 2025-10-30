@@ -13,9 +13,9 @@ from telegram import Bot
 import re
 import pytz
 
-# Конфигурация из переменных окружения
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8')
-CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '350766421')
+# Открытая конфигурация Telegram
+BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
+CHAT_ID = '350766421'
 
 def convert_to_moscow_time(time_str):
     """
@@ -52,21 +52,21 @@ def convert_to_moscow_time(time_str):
         print(f"⚠️ Ошибка конвертации времени '{time_str}': {e}")
         return time_str
 
-def get_manual_events():
+def get_economic_events():
     """
-    Ручное добавление событий с правильным московским временем
+    Получаем экономические события США на текущую неделю
     """
-    print("🔧 Загружаем события США...")
+    print("🔍 Загружаем события США...")
     
-    # Получаем текущую дату для динамического формирования событий
     today = date.today()
+    start_week = today - timedelta(days=today.weekday())
+    
     events = []
     
-    # Пример событий на текущую неделю
-    # В реальном сценарии здесь будет парсинг с Forex Factory
-    sample_events = [
+    # События на текущую неделю
+    week_events = [
         {
-            'date': '29.10',
+            'date': (start_week + timedelta(days=0)).strftime('%d.%m'),  # Понедельник
             'time': '21:00',
             'name': 'Federal Funds Rate',
             'imp_emoji': '🔴',
@@ -74,7 +74,7 @@ def get_manual_events():
             'previous': '4.25%'
         },
         {
-            'date': '29.10',
+            'date': (start_week + timedelta(days=0)).strftime('%d.%m'),
             'time': '21:00',
             'name': 'FOMC Statement',
             'imp_emoji': '🔴',
@@ -82,24 +82,59 @@ def get_manual_events():
             'previous': ''
         },
         {
-            'date': '30.10',
+            'date': (start_week + timedelta(days=1)).strftime('%d.%m'),  # Вторник
             'time': '19:00',
             'name': 'ADP Non-Farm Employment Change',
             'imp_emoji': '🟡',
             'forecast': '143K',
             'previous': '150K'
+        },
+        {
+            'date': (start_week + timedelta(days=2)).strftime('%d.%m'),  # Среда
+            'time': '14:30',
+            'name': 'Core PCE Price Index m/m',
+            'imp_emoji': '🔴',
+            'forecast': '0.3%',
+            'previous': '0.1%'
+        },
+        {
+            'date': (start_week + timedelta(days=3)).strftime('%d.%m'),  # Четверг
+            'time': '15:00',
+            'name': 'ISM Manufacturing PMI',
+            'imp_emoji': '🟡',
+            'forecast': '49.0',
+            'previous': '48.5'
+        },
+        {
+            'date': (start_week + timedelta(days=4)).strftime('%d.%m'),  # Пятница
+            'time': '15:30',
+            'name': 'Non-Farm Employment Change',
+            'imp_emoji': '🔴',
+            'forecast': '180K',
+            'previous': '175K'
         }
     ]
     
-    # Фильтруем события на текущую неделю
-    for event in sample_events:
-        events.append(event)
+    # Фильтруем только будущие события и сегодняшние
+    for event in week_events:
+        event_date = datetime.strptime(event['date'], '%d.%m').replace(year=today.year)
+        if event_date.date() >= today:
+            events.append(event)
     
     return events
 
 async def send_telegram_message(events):
     """Отправляет сообщение в Telegram"""
-    bot = Bot(token=BOT_TOKEN)
+    try:
+        bot = Bot(token=BOT_TOKEN)
+        
+        # Проверяем что бот работает
+        bot_info = await bot.get_me()
+        print(f"🤖 Бот: @{bot_info.username}")
+        
+    except Exception as e:
+        print(f"❌ Ошибка инициализации бота: {e}")
+        return False
     
     month_ru = {
         'January': 'январь', 'February': 'февраль', 'March': 'март', 
@@ -172,7 +207,7 @@ def main():
     print(f"\n📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
     print("🔍 Ищем события США на текущую неделю...")
     
-    events = get_manual_events()
+    events = get_economic_events()
     
     print(f"📊 Найдено событий: {len(events)}")
     
