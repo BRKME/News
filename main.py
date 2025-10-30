@@ -90,12 +90,28 @@ def get_economic_events():
             'previous': '150K'
         },
         {
+            'date': (start_week + timedelta(days=1)).strftime('%d.%m'),
+            'time': '21:00', 
+            'name': 'CB Consumer Confidence',
+            'imp_emoji': '🟡',
+            'forecast': '101.5',
+            'previous': '100.5'
+        },
+        {
             'date': (start_week + timedelta(days=2)).strftime('%d.%m'),  # Среда
             'time': '14:30',
             'name': 'Core PCE Price Index m/m',
             'imp_emoji': '🔴',
             'forecast': '0.3%',
             'previous': '0.1%'
+        },
+        {
+            'date': (start_week + timedelta(days=2)).strftime('%d.%m'),
+            'time': '16:00',
+            'name': 'Pending Home Sales m/m',
+            'imp_emoji': '🟢',
+            'forecast': '0.5%',
+            'previous': '-0.5%'
         },
         {
             'date': (start_week + timedelta(days=3)).strftime('%d.%m'),  # Четверг
@@ -112,6 +128,22 @@ def get_economic_events():
             'imp_emoji': '🔴',
             'forecast': '180K',
             'previous': '175K'
+        },
+        {
+            'date': (start_week + timedelta(days=4)).strftime('%d.%m'),
+            'time': '15:30',
+            'name': 'Unemployment Rate',
+            'imp_emoji': '🔴',
+            'forecast': '3.8%',
+            'previous': '3.9%'
+        },
+        {
+            'date': (start_week + timedelta(days=4)).strftime('%d.%m'),
+            'time': '17:00',
+            'name': 'ISM Services PMI',
+            'imp_emoji': '🟡',
+            'forecast': '53.5',
+            'previous': '53.0'
         }
     ]
     
@@ -175,8 +207,19 @@ async def send_telegram_message(events):
                 events_by_date[event['date']] = []
             events_by_date[event['date']].append(event)
         
-        for date_str, date_events in events_by_date.items():
-            message += f"\n<b>🗓 {date_str}</b>\n"
+        # Сортируем даты
+        sorted_dates = sorted(events_by_date.keys(), key=lambda x: datetime.strptime(x, '%d.%m'))
+        
+        first_day = True
+        for date_str in sorted_dates:
+            date_events = events_by_date[date_str]
+            
+            # Добавляем горизонтальную линию перед каждым днем (кроме первого)
+            if not first_day:
+                message += "────────────────────────────\n\n"
+            first_day = False
+            
+            message += f"<b>🗓 {date_str}</b>\n"
             for event in date_events:
                 message += f"{event['imp_emoji']} <b>{event['time']}</b>\n"
                 message += f"   📊 {event['name']}\n"
