@@ -53,42 +53,75 @@ def convert_to_moscow_time(time_str):
         print(f"Time conversion error '{time_str}': {e}")
         return time_str
 
-def is_us_event(event_name):
+def is_strict_us_event(event_name):
     """
-    Checks if event is US-related
+    Strict check if event is US-related
+    Only allows events that are clearly US-specific
     """
+    # List of countries to exclude
+    exclude_countries = [
+        'italian', 'italy', 'french', 'france', 'german', 'germany', 
+        'spanish', 'spain', 'euro', 'european', 'ecb', 'eu ',
+        'uk ', 'british', 'canada', 'canadian', 'australia', 'australian',
+        'japan', 'japanese', 'china', 'chinese', 'swiss', 'switzerland'
+    ]
+    
+    # US-specific keywords (must contain at least one)
     us_keywords = [
-        # Fed and monetary policy
-        'fed', 'fomc', 'federal', 'rate decision', 'interest rate',
-        # Employment
-        'non-farm', 'nfp', 'unemployment', 'jobless', 'employment',
-        'adp', 'initial claims', 'continuing claims',
-        # Inflation
-        'cpi', 'inflation', 'pce', 'core pce', 'ppi',
-        # Retail sales
-        'retail sales', 'consumer', 'spending',
-        # Industry
-        'ism', 'pmi', 'industrial', 'manufacturing',
-        # GDP and growth
-        'gdp', 'growth', 'productivity',
-        # Housing and real estate
-        'housing', 'home sales', 'building permits', 'starts',
-        # Confidence
-        'confidence', 'sentiment', 'michigan',
-        # Trade
-        'trade balance', 'export', 'import',
-        # Other
-        'durable goods', 'factory orders', 'business inventories'
+        # Federal Reserve
+        'fed', 'federal reserve', 'fomc', 'rate decision',
+        # US-specific indicators
+        'non-farm', 'nfp', 'adp employment', 'initial jobless claims',
+        'continuing claims', 'philadelphia fed', 'richmond fed',
+        'kansas fed', 'dallas fed', 'chicago fed', 'new york fed',
+        # US government data
+        'bea', 'bls', 'commerce department', 'treasury',
+        # US-specific indices
+        'ism manufacturing', 'ism services', 'ism pmi', 'chicago pmi',
+        'michigan consumer', 'cb consumer', 'conference board',
+        # Housing (US-specific)
+        'nahb housing', 'building permits', 'housing starts', 'new home sales',
+        'existing home sales', 'pending home sales', 'case-shiller',
+        # Trade (US-specific)
+        'trade balance', 'export prices', 'import prices',
+        # Other US-specific
+        'crude oil inventories', 'eia', 'api crude', 'natural gas storage',
+        'factory orders', 'durable goods', 'capital goods',
+        'business inventories', 'wholesale inventories', 'retail inventories',
+        'gdp price index', 'core pce', 'personal spending', 'personal income'
     ]
     
     event_lower = event_name.lower()
-    return any(keyword in event_lower for keyword in us_keywords)
+    
+    # First, check if event contains excluded country names
+    for country in exclude_countries:
+        if country in event_lower:
+            return False
+    
+    # Then check if it contains US-specific keywords
+    for keyword in us_keywords:
+        if keyword in event_lower:
+            return True
+    
+    # Additional check for generic terms that should be US-only in our context
+    generic_terms = ['gdp', 'cpi', 'ppi', 'pce', 'unemployment', 'retail sales']
+    for term in generic_terms:
+        if term in event_lower:
+            # If it's a generic term, make sure it doesn't have country specifiers
+            has_country_specifier = any(
+                specifier in event_lower 
+                for specifier in ['eurozone', 'europe', 'german', 'french', 'italian', 'spanish']
+            )
+            if not has_country_specifier:
+                return True
+    
+    return False
 
-def parse_investing_com():
+def parse_investing_com_strict():
     """
-    Parses calendar from Investing.com - ONLY US events
+    Parses calendar from Investing.com - STRICT US filtering
     """
-    print("Parsing Investing.com (US only)...")
+    print("Parsing Investing.com (STRICT US only)...")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -118,16 +151,21 @@ def parse_investing_com():
                 if 'js-event-item' not in row.get('class', []):
                     continue
                 
-                # Extract currency - ONLY USD
+                # Extract currency - ONLY USD with strict check
                 currency_cell = row.find('td', class_='left')
                 currency = ''
+                is_usd = False
+                
                 if currency_cell:
                     currency_flag = currency_cell.find('span', class_='ceFlags')
                     if currency_flag:
                         currency = currency_flag.get('title', '')
-                        # Check if it's US
-                        if 'United States' not in currency and 'USD' not in currency:
-                            continue
+                        # Strict USD check
+                        if 'United States' in currency or 'USD' in currency:
+                            is_usd = True
+                
+                if not is_usd:
+                    continue
                 
                 # Extract time
                 time_cell = row.find('td', class_='time')
@@ -142,10 +180,10 @@ def parse_investing_com():
                 if event_cell:
                     event_name = event_cell.get_text(strip=True)
                     # Remove extra spaces
-                    event_name = re.sub(r'\s+', ' ', event_name)
+                    event_name = re.sub(r'\s+', ' ', event_name).strip()
                     
-                    # Additional check - only US events
-                    if not is_us_event(event_name):
+                    # STRICT check - only US events
+                    if not is_strict_us_event(event_name):
                         continue
                 else:
                     continue
@@ -182,24 +220,24 @@ def parse_investing_com():
                 }
                 
                 events.append(event_data)
-                print(f"US: {event_time} - {event_name} {imp_emoji}")
+                print(f"STRICT US: {event_time} - {event_name} {imp_emoji}")
                 
             except Exception as e:
                 print(f"Error parsing row: {e}")
                 continue
         
-        print(f"Investing.com US: found {len(events)} events")
+        print(f"Investing.com STRICT US: found {len(events)} events")
         return events
         
     except Exception as e:
         print(f"Error parsing Investing.com: {e}")
         return []
 
-def parse_fxstreet():
+def parse_fxstreet_strict():
     """
-    Parses calendar from FXStreet - ONLY US events
+    Parses calendar from FXStreet - STRICT US filtering
     """
-    print("Parsing FXStreet (US only)...")
+    print("Parsing FXStreet (STRICT US only)...")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -219,7 +257,7 @@ def parse_fxstreet():
         
         for event in data:
             try:
-                # Filter ONLY USD events
+                # Filter STRICTLY USD events
                 if event.get('currency') != 'USD':
                     continue
                 
@@ -228,8 +266,8 @@ def parse_fxstreet():
                 if not event_name:
                     continue
                     
-                # Additional check - only US events
-                if not is_us_event(event_name):
+                # STRICT check - only US events
+                if not is_strict_us_event(event_name):
                     continue
                 
                 # Extract time
@@ -263,31 +301,31 @@ def parse_fxstreet():
                 }
                 
                 events.append(event_data)
-                print(f"US: {event_time} - {event_name} {imp_emoji}")
+                print(f"STRICT US: {event_time} - {event_name} {imp_emoji}")
                 
             except Exception as e:
                 print(f"Error parsing event: {e}")
                 continue
         
-        print(f"FXStreet US: found {len(events)} events")
+        print(f"FXStreet STRICT US: found {len(events)} events")
         return events
         
     except Exception as e:
         print(f"Error parsing FXStreet: {e}")
         return []
 
-def get_economic_events():
+def get_economic_events_strict():
     """
-    Gets US economic events from multiple sources
+    Gets US economic events with STRICT filtering
     """
-    print("Looking for US events from alternative sources...")
+    print("Looking for US events with STRICT filtering...")
     
     events = []
     
     # Try different sources in order
     sources = [
-        parse_investing_com,
-        parse_fxstreet,
+        parse_investing_com_strict,
+        parse_fxstreet_strict,
     ]
     
     for source in sources:
@@ -299,7 +337,7 @@ def get_economic_events():
     # If all sources failed, use US backup data
     if not events:
         print("All sources failed, using US backup data")
-        events = get_backup_events()
+        events = get_backup_events_strict()
     
     # Remove duplicates (by name and time)
     unique_events = []
@@ -330,21 +368,21 @@ def get_economic_events():
     # Sort by time
     filtered_events.sort(key=lambda x: x['time'])
     
-    print(f"Final number of US events: {len(filtered_events)}")
+    print(f"Final number of STRICT US events: {len(filtered_events)}")
     return filtered_events
 
-def get_backup_events():
+def get_backup_events_strict():
     """
-    US backup data in case parsing fails
+    US backup data with only clear US events
     """
     today = date.today()
     
-    # Create realistic US events for today
+    # Create realistic STRICT US events for today
     return [
         {
             'date': today.strftime('%d.%m'),
             'time': '14:30',
-            'name': 'Core PCE Price Index m/m',
+            'name': 'Core PCE Price Index',
             'imp_emoji': '🔴',
             'forecast': '0.3%',
             'previous': '0.1%',
@@ -353,7 +391,7 @@ def get_backup_events():
         {
             'date': today.strftime('%d.%m'),
             'time': '14:30', 
-            'name': 'GDP Growth Rate QoQ',
+            'name': 'GDP Growth Rate',
             'imp_emoji': '🔴',
             'forecast': '2.1%',
             'previous': '1.8%',
@@ -362,10 +400,19 @@ def get_backup_events():
         {
             'date': today.strftime('%d.%m'),
             'time': '15:00',
-            'name': 'Pending Home Sales m/m',
+            'name': 'Pending Home Sales',
             'imp_emoji': '🟢',
             'forecast': '0.5%',
             'previous': '-0.5%',
+            'source': 'Backup data'
+        },
+        {
+            'date': today.strftime('%d.%m'),
+            'time': '15:55',
+            'name': 'FOMC Member Bowman Speech',
+            'imp_emoji': '🟡',
+            'forecast': '',
+            'previous': '',
             'source': 'Backup data'
         },
         {
@@ -419,7 +466,7 @@ async def send_telegram_message(events):
 <b>📆 Дата: {today.strftime('%d.%m')}, {month_name}</b>
 <b>⏰ Время московское (MSK)</b>
 
-<code>Только события США</code>
+<code>Только события США (строгая фильтрация)</code>
 
 """
         
@@ -452,7 +499,7 @@ async def send_telegram_message(events):
                 message += "\n"
         
         message += "<i>💡 Время конвертировано из EST в MSK (+6 часов)</i>"
-        message += "\n<i>🔍 Только события США</i>"
+        message += "\n<i>🔍 Только события США (строгая фильтрация)</i>"
     
     try:
         await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='HTML')
@@ -465,15 +512,15 @@ async def send_telegram_message(events):
 def main():
     """Main function"""
     print("=" * 70)
-    print("US ECONOMIC EVENTS PARSER - US ONLY")
+    print("US ECONOMIC EVENTS PARSER - STRICT US FILTERING")
     print("=" * 70)
     
     print(f"Date: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
     
-    events = get_economic_events()
+    events = get_economic_events_strict()
     
     if events:
-        print("Event details:")
+        print("STRICT US Event details:")
         for i, event in enumerate(events, 1):
             print(f"{i}. {event['time']} {event['imp_emoji']} {event['name']}")
     
