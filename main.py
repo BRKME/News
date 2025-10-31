@@ -1,65 +1,73 @@
+#!/usr/bin/env python3
+"""
+US Economic Events Parser using market-calendar-tool
+"""
+
 import asyncio
-from datetime import datetime, timedelta
-from market_calendar_tool import MarketCalendar
+from datetime import date
 from telegram import Bot
+from market_calendar_tool import get_calendar
+import pandas as pd
 
-# === Telegram configuration ===
-BOT_TOKEN = "8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8"
-CHAT_ID = "350766421"
+# ------------------ Telegram configuration ------------------
+BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
+CHAT_ID = '350766421'
 
-# === Main logic ===
+# ------------------ Function to fetch US events ------------------
 async def fetch_us_events():
-    """Парсинг реальных экономических событий США через MarketCalendar"""
-    mc = MarketCalendar()
-    today = datetime.utcnow().date()
-    end_date = today + timedelta(days=1)
+    today_str = date.today().strftime("%Y-%m-%d")
     try:
-        events_df = await mc.calendar(
+        df: pd.DataFrame = await get_calendar(
             country="united states",
-            start_date=today.isoformat(),
-            end_date=end_date.isoformat()
+            start_date=today_str,
+            end_date=today_str
         )
-        return events_df
+        # Фильтруем только будущие события по времени (если есть колонка 'time')
+        events = []
+        now = pd.Timestamp.now()
+        for _, row in df.iterrows():
+            time_str = str(row.get("time", "TBD"))
+            name = row.get("event", "Unknown event")
+            if time_str != "TBD":
+                try:
+                    event_time = pd.to_datetime(f"{today_str} {time_str}")
+                    if event_time >= now:
+                        events.append({"time": event_time.strftime("%H:%M"), "name": name})
+                except:
+                    events.append({"time": "TBD", "name": name})
+            else:
+                events.append({"time": "TBD", "name": name})
+        return events
     except Exception as e:
-        print(f"[ERROR] Ошибка получения данных: {e}")
-        return None
+        print(f"Error fetching US events: {e}")
+        return []
 
-
-async def format_events(events_df):
-    """Форматирование списка событий для Telegram"""
-    if events_df is None or events_df.empty:
-        return "⚠️ No US events found today."
-
-    result_lines = ["🇺🇸 *US Economic Events Today:*"]
-    for _, row in events_df.iterrows():
-        time = row.get("date", "") or "N/A"
-        event = row.get("event", "Unnamed Event")
-        importance = row.get("importance", "")
-        result_lines.append(f"🕒 {time} — {event} ({importance})")
-
-    return "\n".join(result_lines)
-
-
-async def send_to_telegram(message: str):
-    """Отправка сообщения в Telegram"""
+# ------------------ Function to send Telegram message ------------------
+async def send_telegram_message(events):
     bot = Bot(token=BOT_TOKEN)
+    if not events:
+        message = f"📅 Экономические события США ({date.today().strftime('%d.%m.%Y')})\n\n" \
+                  "🤷‍♂️ На сегодня нет событий."
+    else:
+        message = f"📅 ЭКОНОМИЧЕСКИЕ СОБЫТИЯ США ({date.today().strftime('%d.%m.%Y')})\n\n"
+        for ev in events:
+            message += f"⏰ {ev['time']} - {ev['name']}\n"
+    
     try:
-        await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown")
-        print("[OK] Сообщение успешно отправлено в Telegram")
+        await bot.send_message(chat_id=CHAT_ID, text=message)
+        print("✅ Message sent to Telegram!")
     except Exception as e:
-        print(f"[ERROR] Ошибка отправки в Telegram: {e}")
+        print(f"❌ Telegram sending error: {e}")
 
-
+# ------------------ Main ------------------
 async def main():
-    print("=" * 60)
-    print("US ECONOMIC EVENTS - REAL DATA PARSER")
-    print("=" * 60)
-    print("Fetching real data...")
-
+    print(f"Fetching US events for {date.today().strftime('%d.%m.%Y')}...")
     events = await fetch_us_events()
-    message = await format_events(events)
-    await send_to_telegram(message)
-
+    print(f"Found {len(events)} events")
+    for ev in events:
+        print(f"{ev['time']} - {ev['name']}")
+    print("Sending to Telegram...")
+    await send_telegram_message(events)
 
 if __name__ == "__main__":
     asyncio.run(main())
