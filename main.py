@@ -11,7 +11,7 @@ BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
 CHAT_ID = '350766421'
 
 def fetch_us_events():
-    """Скрейпим события США с TradingEconomics (исправленный парсер)"""
+    """Скрейпим события США с TradingEconomics (исправленный парсер по реальной HTML)"""
     try:
         today_str = date.today().strftime("%Y-%m-%d")
         url = f"https://tradingeconomics.com/united-states/calendar?date={today_str}"
@@ -22,37 +22,39 @@ def fetch_us_events():
         soup = BeautifulSoup(response.text, 'html.parser')
         events = []
         
-        # Находим таблицу календаря и строки <tr>
-        table = soup.find('table', class_='table')
+        # Находим таблицу
+        table = soup.find('table', class_='economic-calendar')
         if not table:
+            print("Таблица не найдена")
             return events
         
-        rows = table.find_all('tr')[1:]  # Пропускаем header
+        # Обрабатываем строки tbody
+        rows = table.find('tbody').find_all('tr') if table.find('tbody') else table.find_all('tr')[1:]  # Пропускаем header
         for row in rows:
             cells = row.find_all('td')
             if len(cells) < 5:
                 continue
             
-            # Фильтр по стране: img с флагом США (src содержит 'us.png' или 'united-states')
-            country_cell = cells[1]  # Вторая td — страна
-            country_img = country_cell.find('img')
-            if not country_img or 'us.png' not in country_img.get('src', '') and 'united-states' not in country_img.get('src', ''):
+            # Фильтр по стране: td class="country" с 'US'
+            country_cell = cells[1] if len(cells) > 1 else None
+            if not country_cell or country_cell.get('class', [None])[0] != 'country' or 'US' not in country_cell.text.strip():
                 continue
             
-            time_cell = cells[0].text.strip()  # Первая td — время (e.g., "01:30 PM")
-            event_cell = cells[2].text.strip()  # Третья — событие
-            forecast_cell = cells[3].text.strip() if len(cells) > 3 else ''  # Четвёртая — прогноз
-            previous_cell = cells[4].text.strip() if len(cells) > 4 else ''  # Пятая — предыдущее
-            impact_cell = cells[2].find('span', class_='pull-right')  # Impact в event-cell (bull/bear icons)
-            impact = 'high' if impact_cell and 'bull' in impact_cell.get('class', []) else 'medium' if impact_cell else 'low'
+            time_cell = cells[0].text.strip()  # time: "01:30 PM"
+            event_cell = cells[2].text.strip()  # event
+            forecast_cell = cells[3].text.strip() if len(cells) > 3 else ''  # forecast
+            previous_cell = cells[4].text.strip() if len(cells) > 4 else ''  # previous
+            # Impact: по умолчанию medium; можно доработать по иконкам в event_cell
+            impact = 'medium'  # Если есть span с классом bull/high в cells[2], то 'high'
             
-            events.append({
-                'time': time_cell,
-                'event': event_cell,
-                'forecast': forecast_cell,
-                'previous': previous_cell,
-                'impact': impact
-            })
+            if event_cell:  # Только если событие есть
+                events.append({
+                    'time': time_cell,
+                    'event': event_cell,
+                    'forecast': forecast_cell,
+                    'previous': previous_cell,
+                    'impact': impact
+                })
         
         print(f"Получено US событий: {len(events)}")
         return events
@@ -61,22 +63,23 @@ def fetch_us_events():
         return []
 
 def convert_to_msk_time(time_str):
-    """Конвертируем время из EST в MSK (+8 часов)"""
+    """Конвертируем время из EST (12h) в MSK (+8 часов)"""
     if time_str in ['TBD', 'All Day', 'Tentative', '']:
         return 'TBD'
     
     try:
-        # Парсим 12h формат (e.g., "01:30 PM")
+        # Парсим 12h формат "01:30 PM"
         dt = datetime.strptime(time_str, '%I:%M %p')
         est_tz = pytz.timezone('US/Eastern')
         msk_tz = pytz.timezone('Europe/Moscow')
         
+        # Локализуем на сегодня
         est_dt = est_tz.localize(dt.replace(year=date.today().year, month=date.today().month, day=date.today().day))
         msk_dt = est_dt.astimezone(msk_tz)
         return msk_dt.strftime('%H:%M')
     except ValueError:
         try:
-            # Fallback на 24h
+            # Fallback 24h
             dt = datetime.strptime(time_str, '%H:%M')
             hour = dt.hour + 8
             if hour >= 24:
@@ -125,6 +128,7 @@ def format_events(events):
 
 """
     
+    # Группируем по времени
     events_by_time = {}
     for ev in filtered_events:
         time_key = ev.get('time', 'TBD')
