@@ -1,86 +1,96 @@
 #!/usr/bin/env python3
 import asyncio
-from datetime import datetime, date
-import pytz
 import feedparser
+from datetime import datetime
+import pytz
 from telegram import Bot
 
-# Telegram configuration
+# ---------------- Telegram Configuration ----------------
 BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
 CHAT_ID = '350766421'
 
-# RSS URL для календаря Investing.com
-RSS_URL = 'https://www.investing.com/rss/financial-calendar.rss'
+# ---------------- RSS Feed Configuration ----------------
+RSS_URL = "https://www.investing.com/rss/financial-calendar"
 
-def fetch_rss_events():
-    """Получаем события из RSS Investing.com"""
+# ---------------- Functions ----------------
+def fetch_us_events():
+    """
+    Получаем события США из RSS Investing.com
+    """
     try:
         feed = feedparser.parse(RSS_URL)
         events = []
 
-        msk_tz = pytz.timezone('Europe/Moscow')
-        today = date.today()
-
         for entry in feed.entries:
-            # Дата события в RSS
-            if hasattr(entry, 'published_parsed'):
-                event_date = datetime(*entry.published_parsed[:6])
-            else:
-                continue
+            title = entry.title
+            summary = entry.summary
+            link = entry.link
+            # Попробуем фильтровать только США
+            if 'US' in title or 'United States' in title:
+                # В RSS нет точного времени, берём опубликованное время
+                published = entry.get('published', '')
+                if published:
+                    try:
+                        dt = datetime.strptime(published, '%a, %d %b %Y %H:%M:%S %Z')
+                        est_tz = pytz.timezone('US/Eastern')
+                        dt_est = est_tz.localize(dt)
+                        msk_tz = pytz.timezone('Europe/Moscow')
+                        dt_msk = dt_est.astimezone(msk_tz)
+                        time_str = dt_msk.strftime('%H:%M')
+                    except Exception:
+                        time_str = published
+                else:
+                    time_str = 'TBD'
 
-            # Берём только события на сегодня
-            if event_date.date() != today:
-                continue
-
-            # Время конвертируем в MSK
-            est_tz = pytz.timezone('US/Eastern')
-            est_dt = est_tz.localize(event_date)
-            msk_dt = est_dt.astimezone(msk_tz)
-            time_str = msk_dt.strftime('%H:%M')
-
-            events.append({
-                'time': time_str,
-                'title': entry.title
-            })
-
-        return sorted(events, key=lambda x: x['time'])
+                events.append({
+                    'time': time_str,
+                    'event': title,
+                    'summary': summary,
+                    'link': link
+                })
+        return events
     except Exception as e:
-        print(f"Ошибка получения RSS: {e}")
+        print(f"Ошибка при получении RSS: {e}")
         return []
 
 def format_events(events):
-    """Форматируем события для Telegram"""
+    """
+    Форматируем список событий для Telegram
+    """
     if not events:
         return "📅 Сегодня экономических событий США нет."
 
-    message = f"📅 <b>ЭКОНОМИЧЕСКИЕ СОБЫТИЯ США 🇺🇸</b>\n"
-    message += f"📆 <b>Дата: {date.today().strftime('%d.%m.%Y')}</b>\n"
-    message += "⏰ <b>Время московское (MSK)</b>\n\n"
+    events.sort(key=lambda x: x.get('time', 'TBD'))
 
+    message = "📅 <b>ЭКОНОМИЧЕСКИЕ СОБЫТИЯ США 🇺🇸</b>\n\n"
     for ev in events:
-        message += f"🟢 <b>{ev['time']}</b> — {ev['title']}\n"
+        message += f"⏰ <b>{ev.get('time')}</b>\n"
+        message += f"   {ev.get('event')}\n"
+        if ev.get('summary'):
+            message += f"   {ev.get('summary')}\n"
+        if ev.get('link'):
+            message += f"   🔗 <a href='{ev.get('link')}'>Подробнее</a>\n"
+        message += "────────────────────\n"
 
-    message += "\n💡 Данные: Investing.com RSS"
     return message
 
 async def send_telegram_message(text):
-    """Отправка сообщения в Telegram"""
+    """
+    Отправка сообщения в Telegram
+    """
     try:
         bot = Bot(token=BOT_TOKEN)
-        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode='HTML')
+        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode='HTML', disable_web_page_preview=False)
         print("✅ Сообщение отправлено в Telegram")
     except Exception as e:
         print(f"Ошибка отправки в Telegram: {e}")
 
+# ---------------- Main ----------------
 async def main():
-    print("=== US ECONOMIC EVENTS BOT (RSS) ===")
-    try:
-        events = await asyncio.to_thread(fetch_rss_events)
-        message = format_events(events)
-        print(message)
-        await send_telegram_message(message)
-    except Exception as e:
-        print(f"Критическая ошибка: {e}")
+    print("=== US ECONOMIC EVENTS BOT ===")
+    events = await asyncio.to_thread(fetch_us_events)
+    message = format_events(events)
+    await send_telegram_message(message)
 
 if __name__ == "__main__":
     asyncio.run(main())
