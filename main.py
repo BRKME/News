@@ -1,112 +1,148 @@
 #!/usr/bin/env python3
-"""
-US Economic Events Parser with Telegram notifications
-"""
-
 import asyncio
-from datetime import datetime, date, time, timedelta
-import re
-
-# Telegram
+from datetime import date, datetime
+import pandas as pd
+import pytz
+from market_calendar_tool import MarketCalendarTool
 from telegram import Bot
 
-# Market calendar tool
-from market_calendar_tool import get_calendar, get_events
-
-# -----------------------------
-# Telegram configuration
-# -----------------------------
+# Telegram configuration (hardcoded as requested)
 BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
 CHAT_ID = '350766421'
 
-# -----------------------------
-# Time conversion
-# -----------------------------
-def convert_est_to_msk(est_time_str: str) -> str:
-    """Convert HH:MM EST to MSK"""
-    try:
-        match = re.match(r'(\d+):(\d+)(am|pm)?', est_time_str.lower())
-        if not match:
-            return est_time_str
-        hour, minute, period = int(match.group(1)), int(match.group(2)), match.group(3)
-        if period == 'pm' and hour != 12:
-            hour += 12
-        if period == 'am' and hour == 12:
-            hour = 0
-        msk_hour = (hour + 6) % 24
-        return f"{msk_hour:02d}:{minute:02d}"
-    except:
-        return est_time_str
-
-# -----------------------------
-# Fetch events from Market Calendar
-# -----------------------------
 async def fetch_us_events():
-    """Fetch US economic events"""
+    """Получаем события США на сегодня через MarketCalendarTool"""
     try:
-        # Получаем календарь США
-        calendar = await get_calendar('US')
-        # Получаем события на сегодня
-        events = await get_events(calendar, date.today())
-        us_events = []
-        for e in events:
-            us_events.append({
-                'time': convert_est_to_msk(e['time']),
-                'name': e['name'],
-                'imp_emoji': '🟡',  # Можно добавить реальный уровень важности
-                'source': 'MarketCalendarTool'
-            })
-        return us_events
-    except Exception as exc:
-        print(f"Error fetching events: {exc}")
+        mct = MarketCalendarTool()
+        today_str = date.today().strftime("%Y-%m-%d")
+        events_df = mct.get_calendar(  # Синхронный вызов, оборачиваем в thread
+            country="United States",
+            start_date=today_str,
+            end_date=today_str
+        )
+        
+        # Конвертируем DataFrame в список dict, если это DataFrame
+        if isinstance(events_df, pd.DataFrame) and not events_df.empty:
+            events = events_df.to_dict('records')
+        else:
+            events = []
+        
+        print(f"Получено событий: {len(events)}")
+        return events
+    except Exception as e:
+        print(f"Ошибка при получении календаря: {e}")
         return []
 
-# -----------------------------
-# Send message to Telegram
-# -----------------------------
-async def send_telegram(events):
-    bot = Bot(token=BOT_TOKEN)
-
-    today = date.today().strftime('%d.%m.%Y')
-    if not events:
-        message = f"<b>📅 US Economic Events ({today})</b>\n\n🤷‍♂️ No events today."
-    else:
-        message = f"<b>📅 US Economic Events ({today})</b>\n\n"
-        for e in events:
-            message += f"{e['imp_emoji']} <b>{e['time']}</b> - {e['name']} (<i>{e['source']}</i>)\n"
-
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='HTML')
-        print("✅ Message sent to Telegram")
-    except Exception as exc:
-        print(f"❌ Telegram send error: {exc}")
-
-# -----------------------------
-# Simulation for testing
-# -----------------------------
-async def test_simulation():
-    """Fake events for simulation"""
-    fake_events = [
-        {'time': '14:30', 'name': 'Redbook Sales Data', 'imp_emoji': '🟢', 'source': 'Simulation'},
-        {'time': '15:00', 'name': 'CB Consumer Confidence', 'imp_emoji': '🔴', 'source': 'Simulation'},
-        {'time': '16:00', 'name': 'API Crude Oil Stocks', 'imp_emoji': '🟡', 'source': 'Simulation'},
-    ]
-    await send_telegram(fake_events)
-
-# -----------------------------
-# Main
-# -----------------------------
-async def main():
-    print("Fetching US economic events...")
-    events = await fetch_us_events()
+def convert_to_msk_time(time_str):
+    """Конвертируем время из EST в MSK (+8 часов в октябре, без DST)"""
+    if time_str in ['TBD', 'All Day', 'Tentative', '']:
+        return 'TBD'
     
+    try:
+        # Парсим как HH:MM
+        dt = datetime.strptime(time_str, '%H:%M')
+        est_tz = pytz.timezone('US/Eastern')
+        msk_tz = pytz.timezone('Europe/Moscow')
+        
+        est_dt = est_tz.localize(dt.replace(year=date.today().year, month=date.today().month, day=date.today().day))
+        msk_dt = est_dt.astimezone(msk_tz)
+        return msk_dt.strftime('%H:%M')
+    except:
+        return time_str
+
+def format_events(events):
+    """Форматируем список событий в текст для Telegram"""
     if not events:
-        print("No events fetched. Using simulation for testing...")
-        await test_simulation()
-    else:
-        for i, e in enumerate(events, 1):
-            print(f"{i}. {e['time']} {e['imp_emoji']} {e['name']} ({e['source']})")
-        await send_telegram(events)
+        return "📅 <b>Сегодня экономических событий США нет.</b>\n\n💡 <i>Обычно важные: NFP, CPI, FOMC, ВВП.</i>"
+    
+    # Фильтруем будущие события и сортируем по времени
+    msk_tz = pytz.timezone('Europe/Moscow')
+    now = datetime.now(msk_tz).time()
+    
+    filtered_events = []
+    for ev in events:
+        time_str = convert_to_msk_time(ev.get('time', '00:00'))
+        try:
+            event_time = datetime.strptime(time_str, '%H:%M').time()
+            if event_time >= now:
+                ev['time'] = time_str  # Обновляем время на MSK
+                filtered_events.append(ev)
+        except:
+            ev['time'] = time_str
+            filtered_events.append(ev)
+    
+    filtered_events.sort(key=lambda ev: datetime.strptime(ev.get('time', '00:00'), '%H:%M'))
+    
+    if not filtered_events:
+        return "📅 <b>Сегодня нет предстоящих событий США.</b>"
+    
+    today = date.today()
+    month_ru = {
+        'January': 'январь', 'February': 'февраль', 'March': 'март', 'April': 'апрель', 'May': 'май', 'June': 'июнь',
+        'July': 'июль', 'August': 'август', 'September': 'сентябрь', 'October': 'октябрь', 'November': 'ноябрь', 'December': 'декабрь'
+    }
+    month_en = today.strftime('%B')
+    month_name = month_ru.get(month_en, month_en)
+    
+    message = f"""📅 <b>ЭКОНОМИЧЕСКИЕ СОБЫТИЯ США 🇺🇸</b>
+📆 <b>Дата: {today.strftime('%d.%m')}, {month_name}</b>
+⏰ <b>Время московское (MSK)</b>
+
+"""
+    
+    # Группируем по времени
+    events_by_time = {}
+    for ev in filtered_events:
+        time_key = ev['time']
+        if time_key not in events_by_time:
+            events_by_time[time_key] = []
+        events_by_time[time_key].append(ev)
+    
+    sorted_times = sorted(events_by_time.keys(), key=lambda t: datetime.strptime(t, '%H:%M'))
+    
+    for i, time_str in enumerate(sorted_times):
+        time_events = events_by_time[time_str]
+        if i > 0:
+            message += "────────────────────\n\n"
+        
+        for ev in time_events:
+            impact_map = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}
+            impact = impact_map.get(ev.get('impact', 'medium').lower(), '🟡')
+            
+            message += f"{impact} <b>{time_str}</b>\n"
+            message += f"   {ev.get('event', ev.get('name', 'Unknown event'))}\n"
+            
+            forecast = ev.get('forecast', '')
+            if forecast:
+                message += f"   Прогноз: {forecast}\n"
+            previous = ev.get('previous', '')
+            if previous:
+                message += f"   Предыдущее: {previous}\n"
+    
+    message += "\n💡 <i>Время из EST в MSK (+8 ч). Данные: market-calendar-tool</i>"
+    return message
+
+async def send_telegram_message(text):
+    """Отправка сообщения в Telegram"""
+    try:
+        bot = Bot(token=BOT_TOKEN)
+        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode='HTML')
+        print("✅ Сообщение отправлено в Telegram")
+    except Exception as e:
+        print(f"Ошибка отправки в Telegram: {e}")
+
+async def main():
+    print("=== US ECONOMIC EVENTS BOT ===")
+    print(f"Дата: {date.today().strftime('%d.%m.%Y')}")
+    
+    try:
+        # Оборачиваем sync fetch в async thread
+        events = await asyncio.to_thread(fetch_us_events)
+        message = format_events(events)
+        print("Отправляем в Telegram...")
+        await send_telegram_message(message)
+    except Exception as e:
+        print(f"Критическая ошибка: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
