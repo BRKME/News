@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
 from datetime import date, datetime
-import pandas as pd
 import pytz
 import requests
 from bs4 import BeautifulSoup
@@ -12,7 +11,7 @@ BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
 CHAT_ID = '350766421'
 
 def fetch_us_events():
-    """Скрейпим события США с TradingEconomics"""
+    """Скрейпим события США с TradingEconomics (исправленный парсер)"""
     try:
         today_str = date.today().strftime("%Y-%m-%d")
         url = f"https://tradingeconomics.com/united-states/calendar?date={today_str}"
@@ -23,30 +22,37 @@ def fetch_us_events():
         soup = BeautifulSoup(response.text, 'html.parser')
         events = []
         
-        # Парсим таблицу (структура TradingEconomics: rows с классом 'calendar__row')
-        rows = soup.find_all('tr', class_='calendar__row')
+        # Находим таблицу календаря и строки <tr>
+        table = soup.find('table', class_='table')
+        if not table:
+            return events
+        
+        rows = table.find_all('tr')[1:]  # Пропускаем header
         for row in rows:
-            country = row.find('span', class_='calendar__country')
-            if country and ('United States' in country.text or 'USD' in country.text):
-                time_el = row.find('time', class_='calendar__time')
-                event_el = row.find('span', class_='calendar__event')
-                forecast_el = row.find('span', class_='calendar__forecast')
-                previous_el = row.find('span', class_='calendar__previous')
-                impact_el = row.find('span', class_='calendar__impact')
-                
-                time = time_el.text.strip() if time_el else 'TBD'
-                event = event_el.text.strip() if event_el else 'Unknown'
-                forecast = forecast_el.text.strip() if forecast_el else ''
-                previous = previous_el.text.strip() if previous_el else ''
-                impact = impact_el.get('data-impact', 'medium') if impact_el else 'medium'  # high/medium/low
-                
-                events.append({
-                    'time': time,
-                    'event': event,
-                    'forecast': forecast,
-                    'previous': previous,
-                    'impact': impact
-                })
+            cells = row.find_all('td')
+            if len(cells) < 5:
+                continue
+            
+            # Фильтр по стране: img с флагом США (src содержит 'us.png' или 'united-states')
+            country_cell = cells[1]  # Вторая td — страна
+            country_img = country_cell.find('img')
+            if not country_img or 'us.png' not in country_img.get('src', '') and 'united-states' not in country_img.get('src', ''):
+                continue
+            
+            time_cell = cells[0].text.strip()  # Первая td — время (e.g., "01:30 PM")
+            event_cell = cells[2].text.strip()  # Третья — событие
+            forecast_cell = cells[3].text.strip() if len(cells) > 3 else ''  # Четвёртая — прогноз
+            previous_cell = cells[4].text.strip() if len(cells) > 4 else ''  # Пятая — предыдущее
+            impact_cell = cells[2].find('span', class_='pull-right')  # Impact в event-cell (bull/bear icons)
+            impact = 'high' if impact_cell and 'bull' in impact_cell.get('class', []) else 'medium' if impact_cell else 'low'
+            
+            events.append({
+                'time': time_cell,
+                'event': event_cell,
+                'forecast': forecast_cell,
+                'previous': previous_cell,
+                'impact': impact
+            })
         
         print(f"Получено US событий: {len(events)}")
         return events
@@ -60,7 +66,7 @@ def convert_to_msk_time(time_str):
         return 'TBD'
     
     try:
-        # Парсим как HH:MM AM/PM
+        # Парсим 12h формат (e.g., "01:30 PM")
         dt = datetime.strptime(time_str, '%I:%M %p')
         est_tz = pytz.timezone('US/Eastern')
         msk_tz = pytz.timezone('Europe/Moscow')
@@ -68,12 +74,13 @@ def convert_to_msk_time(time_str):
         est_dt = est_tz.localize(dt.replace(year=date.today().year, month=date.today().month, day=date.today().day))
         msk_dt = est_dt.astimezone(msk_tz)
         return msk_dt.strftime('%H:%M')
-    except:
+    except ValueError:
         try:
+            # Fallback на 24h
             dt = datetime.strptime(time_str, '%H:%M')
-            # Если 24h формат, +8 часов просто
             hour = dt.hour + 8
-            if hour >= 24: hour -= 24
+            if hour >= 24:
+                hour -= 24
             return f"{hour:02d}:{dt.minute:02d}"
         except:
             return time_str
@@ -93,7 +100,7 @@ def format_events(events):
         try:
             event_time = datetime.strptime(time_str, '%H:%M').time()
             if event_time >= now:
-                ev['time'] = time_str  # Обновляем на MSK
+                ev['time'] = time_str
                 filtered_events.append(ev)
         except:
             ev['time'] = time_str
@@ -118,7 +125,6 @@ def format_events(events):
 
 """
     
-    # Группируем по времени
     events_by_time = {}
     for ev in filtered_events:
         time_key = ev.get('time', 'TBD')
