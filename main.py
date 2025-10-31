@@ -3,50 +3,80 @@ import asyncio
 from datetime import date, datetime
 import pandas as pd
 import pytz
-from market_calendar_tool import scrape_calendar  # Правильный импорт
+import requests
+from bs4 import BeautifulSoup
 from telegram import Bot
 
 # Telegram configuration (hardcoded as requested)
 BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
 CHAT_ID = '350766421'
 
-def fetch_us_events():  # Sync функция, без async
-    """Получаем события США на сегодня через market-calendar-tool"""
+def fetch_us_events():
+    """Скрейпим события США с TradingEconomics"""
     try:
         today_str = date.today().strftime("%Y-%m-%d")
-        result = scrape_calendar(date_from=today_str, date_to=today_str)  # Скрейпим за сегодня
-        events_df = result.base  # Основной DF с событиями
+        url = f"https://tradingeconomics.com/united-states/calendar?date={today_str}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
         
-        # Фильтр только US событий (колонка 'country' содержит 'USD' или 'United States')
-        if isinstance(events_df, pd.DataFrame) and not events_df.empty:
-            us_mask = events_df['country'].str.contains('USD|United States', case=False, na=False)
-            events_df = events_df[us_mask]
-            events = events_df.to_dict('records')
-        else:
-            events = []
+        soup = BeautifulSoup(response.text, 'html.parser')
+        events = []
+        
+        # Парсим таблицу (структура TradingEconomics: rows с классом 'calendar__row')
+        rows = soup.find_all('tr', class_='calendar__row')
+        for row in rows:
+            country = row.find('span', class_='calendar__country')
+            if country and ('United States' in country.text or 'USD' in country.text):
+                time_el = row.find('time', class_='calendar__time')
+                event_el = row.find('span', class_='calendar__event')
+                forecast_el = row.find('span', class_='calendar__forecast')
+                previous_el = row.find('span', class_='calendar__previous')
+                impact_el = row.find('span', class_='calendar__impact')
+                
+                time = time_el.text.strip() if time_el else 'TBD'
+                event = event_el.text.strip() if event_el else 'Unknown'
+                forecast = forecast_el.text.strip() if forecast_el else ''
+                previous = previous_el.text.strip() if previous_el else ''
+                impact = impact_el.get('data-impact', 'medium') if impact_el else 'medium'  # high/medium/low
+                
+                events.append({
+                    'time': time,
+                    'event': event,
+                    'forecast': forecast,
+                    'previous': previous,
+                    'impact': impact
+                })
         
         print(f"Получено US событий: {len(events)}")
         return events
     except Exception as e:
-        print(f"Ошибка при получении календаря: {e}")
+        print(f"Ошибка скрейпинга: {e}")
         return []
 
 def convert_to_msk_time(time_str):
-    """Конвертируем время из UTC (ForexFactory) в MSK (+3 часа)"""
-    if pd.isna(time_str) or time_str in ['TBD', 'All Day', 'Tentative', '']:
+    """Конвертируем время из EST в MSK (+8 часов)"""
+    if time_str in ['TBD', 'All Day', 'Tentative', '']:
         return 'TBD'
     
     try:
-        # Парсим как HH:MM (предполагаем UTC)
-        dt = datetime.strptime(str(time_str), '%H:%M')
-        utc_tz = pytz.UTC
+        # Парсим как HH:MM AM/PM
+        dt = datetime.strptime(time_str, '%I:%M %p')
+        est_tz = pytz.timezone('US/Eastern')
         msk_tz = pytz.timezone('Europe/Moscow')
         
-        utc_dt = utc_tz.localize(dt.replace(year=date.today().year, month=date.today().month, day=date.today().day))
-        msk_dt = utc_dt.astimezone(msk_tz)
+        est_dt = est_tz.localize(dt.replace(year=date.today().year, month=date.today().month, day=date.today().day))
+        msk_dt = est_dt.astimezone(msk_tz)
         return msk_dt.strftime('%H:%M')
     except:
-        return str(time_str)
+        try:
+            dt = datetime.strptime(time_str, '%H:%M')
+            # Если 24h формат, +8 часов просто
+            hour = dt.hour + 8
+            if hour >= 24: hour -= 24
+            return f"{hour:02d}:{dt.minute:02d}"
+        except:
+            return time_str
 
 def format_events(events):
     """Форматируем список событий в текст для Telegram"""
@@ -104,22 +134,20 @@ def format_events(events):
             message += "────────────────────\n\n"
         
         for ev in time_events:
-            # Impact: строка 'high/medium/low' → эмодзи
-            impact_str = str(ev.get('impact', 'medium')).lower()
             impact_map = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}
-            impact = impact_map.get(impact_str, '🟡')
+            impact = impact_map.get(ev.get('impact', 'medium'), '🟡')
             
             message += f"{impact} <b>{time_str}</b>\n"
-            message += f"   {ev.get('event', ev.get('name', 'Unknown event'))}\n"
+            message += f"   {ev.get('event', 'Unknown event')}\n"
             
             forecast = ev.get('forecast', '')
-            if forecast and str(forecast).strip():
+            if forecast:
                 message += f"   Прогноз: {forecast}\n"
             previous = ev.get('previous', '')
-            if previous and str(previous).strip():
+            if previous:
                 message += f"   Предыдущее: {previous}\n"
     
-    message += "\n💡 <i>Время из UTC в MSK (+3 ч). Данные: market-calendar-tool (ForexFactory)</i>"
+    message += "\n💡 <i>Время из EST в MSK (+8 ч). Данные: TradingEconomics</i>"
     return message
 
 async def send_telegram_message(text):
@@ -136,7 +164,6 @@ async def main():
     print(f"Дата: {date.today().strftime('%d.%m.%Y')}")
     
     try:
-        # Оборачиваем sync fetch в async (пакет sync)
         events = await asyncio.to_thread(fetch_us_events)
         message = format_events(events)
         print("Отправляем в Telegram...")
