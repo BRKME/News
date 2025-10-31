@@ -1,105 +1,64 @@
-import sys
 import asyncio
-import pkg_resources
-import datetime
-import pytz
-import requests
-from loguru import logger
+from datetime import datetime, timedelta
 from market_calendar_tool import MarketCalendar
 from telegram import Bot
-from telegram.error import TelegramError
 
+# === Telegram configuration ===
+BOT_TOKEN = "8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8"
+CHAT_ID = "350766421"
 
-# === 🔍 Проверка зависимостей ===
-required_packages = {
-    "requests": ">=2.32.3",
-    "beautifulsoup4": ">=4.12.3",
-    "python-telegram-bot": "==20.7",
-    "pytz": "==2023.3",
-    "market-calendar-tool": ">=0.2.2",
-    "loguru": ">=0.7.2"
-}
-
-def check_dependencies():
-    for package, version_spec in required_packages.items():
-        try:
-            pkg_resources.require(f"{package}{version_spec}")
-        except pkg_resources.DistributionNotFound:
-            print(f"❌ Пакет {package} не найден. Установи: pip install {package}{version_spec}")
-            sys.exit(1)
-        except pkg_resources.VersionConflict as e:
-            print(f"⚠️ Версия пакета {package} несовместима ({e}).")
-            print(f"   Требуется: {version_spec}")
-            print(f"   Исправь через: pip install '{package}{version_spec}'")
-            sys.exit(1)
-
-check_dependencies()
-
-
-# === ⚙️ Конфигурация ===
-TELEGRAM_TOKEN = "ТОКЕН_БОТА"
-TELEGRAM_CHAT_ID = "ID_ЧАТА"
-TIMEZONE = pytz.timezone("Europe/London")
-EXCHANGES = ["NYSE", "NASDAQ", "LSE", "JPX"]
-
-
-# === 📅 Получение календаря торгов ===
-async def get_market_schedule():
+# === Main logic ===
+async def fetch_us_events():
+    """Парсинг реальных экономических событий США через MarketCalendar"""
+    mc = MarketCalendar()
+    today = datetime.utcnow().date()
+    end_date = today + timedelta(days=1)
     try:
-        mc = MarketCalendar()
-        results = {}
-
-        for exchange in EXCHANGES:
-            logger.info(f"📡 Получаем данные для {exchange}")
-            calendar = await mc.get(exchange, start_date="today", end_date="+5d")
-            next_open = None
-
-            for row in calendar.itertuples():
-                if getattr(row, "is_open", False):
-                    next_open = getattr(row, "date")
-                    break
-
-            results[exchange] = next_open
-
-        return results
-
+        events_df = await mc.calendar(
+            country="united states",
+            start_date=today.isoformat(),
+            end_date=end_date.isoformat()
+        )
+        return events_df
     except Exception as e:
-        logger.error(f"Ошибка при получении данных календаря: {e}")
+        print(f"[ERROR] Ошибка получения данных: {e}")
         return None
 
 
-# === ✉️ Отправка уведомления в Telegram ===
-async def send_telegram_message(message: str):
-    bot = Bot(token=TELEGRAM_TOKEN)
+async def format_events(events_df):
+    """Форматирование списка событий для Telegram"""
+    if events_df is None or events_df.empty:
+        return "⚠️ No US events found today."
+
+    result_lines = ["🇺🇸 *US Economic Events Today:*"]
+    for _, row in events_df.iterrows():
+        time = row.get("date", "") or "N/A"
+        event = row.get("event", "Unnamed Event")
+        importance = row.get("importance", "")
+        result_lines.append(f"🕒 {time} — {event} ({importance})")
+
+    return "\n".join(result_lines)
+
+
+async def send_to_telegram(message: str):
+    """Отправка сообщения в Telegram"""
+    bot = Bot(token=BOT_TOKEN)
     try:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode="HTML")
-        logger.info("✅ Сообщение успешно отправлено в Telegram")
-    except TelegramError as e:
-        logger.error(f"Ошибка Telegram API: {e}")
+        await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown")
+        print("[OK] Сообщение успешно отправлено в Telegram")
     except Exception as e:
-        logger.error(f"Ошибка при отправке сообщения: {e}")
+        print(f"[ERROR] Ошибка отправки в Telegram: {e}")
 
 
-# === 🚀 Основная логика ===
 async def main():
-    logger.info("=== Запуск проверки торговых дней ===")
+    print("=" * 60)
+    print("US ECONOMIC EVENTS - REAL DATA PARSER")
+    print("=" * 60)
+    print("Fetching real data...")
 
-    schedule = await get_market_schedule()
-    if not schedule:
-        logger.error("❌ Не удалось получить календарь торгов.")
-        return
-
-    today = datetime.datetime.now(TIMEZONE).strftime("%Y-%m-%d")
-    message_lines = [f"📊 <b>Торговый календарь на {today}</b>\n"]
-
-    for exchange, next_open in schedule.items():
-        if next_open:
-            message_lines.append(f"🏦 {exchange}: следующий торговый день — <b>{next_open}</b>")
-        else:
-            message_lines.append(f"🏦 {exchange}: нет данных ❌")
-
-    message = "\n".join(message_lines)
-    await send_telegram_message(message)
+    events = await fetch_us_events()
+    message = await format_events(events)
+    await send_to_telegram(message)
 
 
 if __name__ == "__main__":
