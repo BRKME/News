@@ -1,32 +1,14 @@
-name: US Economic Events
-
+name: Daily US Events
 on:
   schedule:
-    - cron: '30 4 * * *'  # 07:30 МСК
-    - cron: '30 9 * * *'  # 12:30 МСК
-    - cron: '0 16 * * *'  # 19:00 МСК
-  workflow_dispatch:
-
+    - cron: '0 6 * * *'  # 9:00 MSK = 6:00 UTC
 jobs:
-  run-parser:
+  send:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'  # ⬅ Исправлено
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install git+https://github.com/pavelkrusek/market-calendar-tool.git
-          pip install python-telegram-bot requests beautifulsoup4 pytz
-
-      - name: Run script
-        run: python main.py
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - run: pip install -r requirements.txt
+    - run: python main.py
