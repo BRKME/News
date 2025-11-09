@@ -1,15 +1,39 @@
 #!/usr/bin/env python3
 import asyncio
 from telegram import Bot
+from datetime import datetime, timedelta
 
 # Telegram configuration
 BOT_TOKEN = '8442392037:AAEiM_b4QfdFLqbmmc1PXNvA99yxmFVLEp8'
 CHAT_ID = '350766421'
 
+def get_russian_date():
+    """Получение текущей даты на русском языке"""
+    now = datetime.now()
+    
+    # Дни недели на русском
+    days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    # Месяцы на русском
+    months = ["января", "февраля", "марта", "апреля", "мая", "июня", 
+              "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+    
+    day_name = days[now.weekday()]
+    day = now.day
+    month_name = months[now.month - 1]
+    
+    # Получаем номер недели в году
+    week_number = now.isocalendar()[1]
+    
+    return f"{day_name} {day} {month_name}, неделя {week_number}"
+
 async def send_telegram_message():
     """Отправка сообщения с ссылкой на календарь"""
-    message = "📅 <b>Экономический календарь</b>\n\n"
-    message += "<a href='https://tradingeconomics.com/calendar'>📊 Полный календарь событий</a>"
+    current_date = get_russian_date()
+    
+    message = "#Экономика #Календарь\n\n"
+    message += f"<b>{current_date}</b>\n\n"
+    message += "<a href='https://tradingeconomics.com/calendar'>📊 Полный календарь событий</a>\n\n"
+    message += "<i>Московское время UTC + 3</i>"
     
     try:
         bot = Bot(token=BOT_TOKEN)
