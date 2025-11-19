@@ -4,8 +4,8 @@ from telegram import Bot
 from datetime import datetime, timedelta
 
 # Telegram configuration
-TELEGRAM_BOT_TOKEN = "8323539910:AAG6DYij-FuqT7q-ovsBNNgEnWH2V6FXhoM"
-TELEGRAM_CHAT_ID = "-1003445906500"
+BOT_TOKEN = '8323539910:AAG6DYij-FuqT7q-ovsBNNgEnWH2V6FXhoM
+CHAT_ID = '-1003445906500'
 
 def get_russian_date():
     """Получение текущей даты на русском языке"""
